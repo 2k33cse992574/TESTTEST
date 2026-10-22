@@ -6,6 +6,7 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
 import type { Document } from '@/types';
 import { mockDocuments } from '@/data/mockData';
+import { registerCredential, revokeRegisteredCredential } from './CredentialRegistry';
 
 export interface AccessLogEntry {
   id: string;
@@ -104,10 +105,12 @@ export function StudentProvider({ children }: { children: ReactNode }) {
     };
     setActiveCredential(cred);
     setCredentialRevoked(false);
+    registerCredential(cred);   // register in module-level registry for /verify lookup
     return cred;
   }, []);
 
   const revokeCredential = useCallback(() => {
+    if (activeCredential) revokeRegisteredCredential(activeCredential.credId);
     setCredentialRevoked(true);
     setAccessLog(prev => [{
       id:             `AL-${Date.now()}`,

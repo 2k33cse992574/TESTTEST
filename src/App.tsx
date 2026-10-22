@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 
 // Auth
 import LoginPage from '@/pages/auth/LoginPage';
+import VerifyPage from '@/pages/auth/VerifyPage';
 
 // Student
 import StudentShell from '@/pages/student/StudentShell';
@@ -65,7 +66,8 @@ function AppRoutes() {
       <Route path="/" element={<RootRedirect />} />
 
       {/* Auth */}
-      <Route path="/login" element={<LoginPage />} />
+      <Route path="/login"  element={<LoginPage />} />
+      <Route path="/verify" element={<VerifyPage />} />
 
       {/* Student portal */}
       <Route path="/student" element={

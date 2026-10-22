@@ -68,7 +68,7 @@ function WalletQRModal({ onClose }: { onClose: () => void }) {
     const payload = btoa(JSON.stringify(cred));
     const sig     = btoa(`pramaan-demo-sig-${cred.credId}`); // demo signature
     const token   = `${header}.${payload}.${sig}`;
-    const verifyUrl = `https://pramaan.aicte.gov.in/verify?token=${cred.credId}&t=${cred.iat}`;
+    const verifyUrl = `${window.location.origin}/verify?token=${cred.credId}&t=${cred.iat}`;
     try {
       // Generate a REAL scannable QR code pointing to the verification URL
       const dataUrl = await QRCode.toDataURL(verifyUrl, {
