@@ -18,7 +18,7 @@ export function AppShell({ navItems, railItems, children }: Props) {
       <TopNav navItems={navItems} />
       <div className="flex flex-1 overflow-hidden">
         <IconRail items={railItems} />
-        <main className="flex-1 overflow-y-auto px-6 py-6">
+        <main className="flex-1 overflow-y-auto px-3 py-4 sm:px-6 sm:py-6 scroll-smooth">
           {children}
         </main>
       </div>

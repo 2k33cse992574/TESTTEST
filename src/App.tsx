@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
+import { StudentProvider } from '@/context/StudentContext';
 import type { ReactNode } from 'react';
 
 // Auth
@@ -68,7 +69,7 @@ function AppRoutes() {
 
       {/* Student portal */}
       <Route path="/student" element={
-        <RequireAuth role="student"><StudentShell /></RequireAuth>
+        <RequireAuth role="student"><StudentProvider><StudentShell /></StudentProvider></RequireAuth>
       }>
         <Route index         element={<StudentOverview />} />
         <Route path="details"   element={<StudentDetails />} />
