@@ -30,6 +30,10 @@ import OfficerEnrolments from '@/pages/officer/OfficerEnrolments';
 import OfficerQueue from '@/pages/officer/OfficerQueue';
 import OfficerSeatLedger from '@/pages/officer/OfficerSeatLedger';
 import OfficerReports from '@/pages/officer/OfficerReports';
+import OfficerPolicyStudio from '@/pages/officer/OfficerPolicyStudio';
+import OfficerAuditTrail from '@/pages/officer/OfficerAuditTrail';
+import OfficerIdentityGraph from '@/pages/officer/OfficerIdentityGraph';
+import OfficerVerifierPortal from '@/pages/officer/OfficerVerifierPortal';
 
 function RequireAuth({ children, role }: { children: ReactNode; role?: string }) {
   const { user, isAuthenticated } = useAuth();
@@ -94,6 +98,10 @@ function AppRoutes() {
         <Route path="enrolments"    element={<OfficerEnrolments />} />
         <Route path="queue"         element={<OfficerQueue />} />
         <Route path="seats"         element={<OfficerSeatLedger />} />
+        <Route path="policy"        element={<OfficerPolicyStudio />} />
+        <Route path="identity"      element={<OfficerIdentityGraph />} />
+        <Route path="verifier"      element={<OfficerVerifierPortal />} />
+        <Route path="audit"         element={<OfficerAuditTrail />} />
         <Route path="reports"       element={<OfficerReports />} />
       </Route>
 
