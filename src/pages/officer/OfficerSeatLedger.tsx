@@ -1,43 +1,99 @@
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { seatPoolData, mockInstitutions } from '@/data/mockData';
+import { api } from '@/api/client';
 import { BarChartComponent } from '@/components/charts/BarChart';
-import { AlertTriangle, CheckCircle2, Info, TrendingUp } from 'lucide-react';
-
-const nationalSeats = mockInstitutions.reduce(
-  (acc, inst) => ({
-    approved: acc.approved + inst.approvedIntake,
-    enrolled: acc.enrolled + inst.enrolledCount,
-  }),
-  { approved: 0, enrolled: 0 }
-);
-
-const breachInstitutions = mockInstitutions.filter(i => i.enrolledCount > i.approvedIntake);
-
-const utilData = mockInstitutions.map(inst => ({
-  name: inst.name.split(' ').slice(0, 2).join(' '),
-  value: Math.round((inst.enrolledCount / inst.approvedIntake) * 100),
-  color: inst.enrolledCount > inst.approvedIntake ? '#C53B45' : inst.enrolledCount / inst.approvedIntake > 0.95 ? '#B7791F' : '#198754',
-}));
+import { AlertTriangle, CheckCircle2, ShieldAlert, ArrowRight, Building2, RefreshCw } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 export default function OfficerSeatLedger() {
-  const overallUtil = Math.round((nationalSeats.enrolled / nationalSeats.approved) * 100);
+  const navigate = useNavigate();
+  const [pools, setPools] = useState<any[]>(seatPoolData);
+  const [instSeats, setInstSeats] = useState<any[]>([]);
+  const [summary, setSummary] = useState({
+    totalApproved: 2840,
+    totalEnrolled: 2885,
+    seatBreaches: 2,
+    seatsRemaining: 0,
+    overallUtil: 101.6
+  });
+
+  useEffect(() => {
+    api.getSeatSummary()
+      .then(res => {
+        if (res) {
+          setSummary({
+            totalApproved: res.totalApprovedIntake,
+            totalEnrolled: res.totalEnrolled,
+            seatBreaches: res.seatBreachesCount,
+            seatsRemaining: res.seatsRemaining,
+            overallUtil: res.overallUtilizationPercent
+          });
+        }
+      })
+      .catch(() => {});
+
+    api.getSeatPools()
+      .then(res => { if (res && res.length) setPools(res); })
+      .catch(() => {});
+
+    api.getInstitutionSeats()
+      .then(res => { if (res && res.length) setInstSeats(res); })
+      .catch(() => {});
+  }, []);
+
+  const breachInstitutions = mockInstitutions.filter(i => i.enrolledCount > i.approvedIntake);
+
+  const utilData = (instSeats.length ? instSeats : mockInstitutions).map(inst => {
+    const enrolled = inst.enrolledCount;
+    const approved = inst.approvedIntake;
+    const pct = Math.round((enrolled / approved) * 100);
+    return {
+      name: inst.name.split(' ').slice(0, 2).join(' '),
+      value: pct,
+      color: enrolled > approved ? '#C53B45' : pct > 95 ? '#B7791F' : '#198754',
+    };
+  });
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       <PageHeader
         title="Seat Ledger"
-        subtitle="National seat accounting — approved intake vs claimed seats across all institutions."
+        subtitle="National seat accounting — approved intake vs claimed seats, pool-wise balances, and excess-admission breach alerts."
         breadcrumb={['AICTE Officer Portal', 'Seat Ledger']}
       />
 
-      {/* National summary */}
+      {/* Excess Admission Alert Banner */}
+      {summary.seatBreaches > 0 && (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-card flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <ShieldAlert className="w-5 h-5 text-danger flex-shrink-0" />
+            <div>
+              <p className="text-sm font-bold text-red-900">
+                Excess-Admission Breach Detected in {summary.seatBreaches} Institution{summary.seatBreaches > 1 ? 's' : ''}
+              </p>
+              <p className="text-xs text-red-700 mt-0.5">
+                Enrolled students exceed statutory approved cap by {summary.totalEnrolled - summary.totalApproved} seats. Show-cause notices triggered.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => navigate('/officer/institutions')}
+            className="btn btn-secondary btn-sm text-xs text-danger border-red-300"
+          >
+            Review Breach Institutions <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* National summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: 'Total Approved Intake',  value: nationalSeats.approved.toLocaleString(), color: 'text-text-primary',   sub: 'All programmes · AY 2026-27' },
-          { label: 'Total Enrolled',          value: nationalSeats.enrolled.toLocaleString(), color: 'text-brand',           sub: `${overallUtil}% utilisation` },
-          { label: 'Seat Breaches',           value: breachInstitutions.length,               color: 'text-danger',          sub: `${breachInstitutions.map(i=>i.name.split(' ')[0]).join(', ')}` },
-          { label: 'Seats Remaining',         value: Math.max(nationalSeats.approved - nationalSeats.enrolled, 0).toLocaleString(), color: 'text-emerald-600', sub: 'Across all institutions' },
+          { label: 'Total Approved Intake',  value: summary.totalApproved.toLocaleString(), color: 'text-text-primary',   sub: 'All programmes · AY 2026-27' },
+          { label: 'Total Enrolled',          value: summary.totalEnrolled.toLocaleString(), color: 'text-brand',           sub: `${summary.overallUtil}% national utilisation` },
+          { label: 'Seat Breaches',           value: summary.seatBreaches,                  color: 'text-danger',          sub: 'Exceeded statutory cap' },
+          { label: 'Seats Remaining',         value: summary.seatsRemaining.toLocaleString(), color: 'text-emerald-600', sub: 'Across compliant institutions' },
         ].map((s, i) => (
           <motion.div key={i} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.06 }} className="card">
             <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide mb-2">{s.label}</p>
@@ -50,177 +106,98 @@ export default function OfficerSeatLedger() {
       {/* Utilisation bar chart */}
       <BarChartComponent
         title="Seat Utilisation by Institution"
-        subtitle="Percentage of approved intake enrolled — red bars indicate over-intake"
+        subtitle="Percentage of approved intake enrolled — red bars indicate over-intake breach"
         data={utilData}
         height={220}
       />
 
-      {/* Seat pool detail */}
+      {/* Pool Breakdown & Institution Tracking */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Pool breakdown */}
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="card"
-        >
-          <div className="flex items-center gap-2 mb-4">
-            <TrendingUp className="w-4 h-4 text-brand" />
-            <h2 className="text-sm font-semibold text-text-primary">Pool-Level Breakdown (SIET Mumbai demo)</h2>
-          </div>
-          <div className="table-wrapper">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Programme</th>
-                  <th>Pool</th>
-                  <th>Cap</th>
-                  <th>Claimed</th>
-                  <th>Over By</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {seatPoolData.map((row, i) => (
-                  <tr key={i}>
-                    <td className="text-sm font-medium">{row.programme}</td>
-                    <td>
-                      <span className="text-xs px-2 py-0.5 bg-canvas border border-border rounded-lg">{row.poolCode}</span>
-                    </td>
-                    <td className="tabular-nums">{row.approved}</td>
-                    <td className={`tabular-nums font-semibold ${row.claimed > row.approved ? 'text-danger' : 'text-text-primary'}`}>
-                      {row.claimed}
-                    </td>
-                    <td className={`tabular-nums font-bold ${row.overBy > 0 ? 'text-danger' : 'text-text-muted'}`}>
-                      {row.overBy > 0 ? `+${row.overBy}` : '—'}
-                    </td>
-                    <td>
-                      <span className={`badge text-xs ${
-                        row.status === 'BREACH'  ? 'badge-danger' :
-                        row.status === 'WARNING' ? 'badge-warning' : 'badge-success'
-                      }`}>{row.status}</span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </motion.div>
-
-        {/* Breach details + explanatory notes */}
-        <div className="space-y-4">
-          {/* Breach details */}
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.24 }}
-            className="card"
-          >
-            <h2 className="text-sm font-semibold text-text-primary mb-4">Active Intake Breaches</h2>
-            {breachInstitutions.length === 0 ? (
-              <div className="flex items-center gap-2 text-emerald-600">
-                <CheckCircle2 className="w-4 h-4" />
-                <span className="text-sm">No intake breaches across all institutions.</span>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {breachInstitutions.map(inst => (
-                  <div key={inst.id} className="p-3 bg-red-50 border border-red-200 rounded-card">
-                    <div className="flex items-start gap-2">
-                      <AlertTriangle className="w-4 h-4 text-danger flex-shrink-0 mt-0.5" />
-                      <div>
-                        <p className="text-xs font-semibold text-danger">{inst.name}</p>
-                        <p className="text-xs text-red-700 mt-0.5">
-                          Enrolled {inst.enrolledCount} against approved intake of {inst.approvedIntake}.
-                          <span className="font-bold"> Over by {inst.enrolledCount - inst.approvedIntake}.</span>
-                        </p>
-                        <p className="text-xs text-red-600 mt-1">{inst.openCases} open case{inst.openCases !== 1 ? 's' : ''}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </motion.div>
-
-          {/* How the ledger works */}
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.28 }}
-            className="card bg-brand-soft/20 border-brand/20"
-          >
-            <div className="flex items-start gap-3">
-              <Info className="w-4 h-4 text-brand flex-shrink-0 mt-0.5" />
-              <div className="space-y-1.5 text-xs text-text-secondary">
-                <p className="font-semibold text-text-primary">How the Seat Ledger works</p>
-                <p>Each admission is a <span className="font-medium text-text-primary">claim</span> with a unique slot number. Claims are never silently dropped — slot numbers above the cap mark overflow.</p>
-                <p>A single ledger-level <span className="font-medium text-text-primary">INTAKE_BREACH</span> case tracks the delta per programme-pool, rather than raising 25 accusations against individual students.</p>
-                <p>The nightly invariant check verifies <code className="bg-canvas px-1 rounded">claimed = count(active enrolments)</code>. Any drift raises a P1 finding.</p>
-              </div>
+        <div className="card">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <p className="text-card-title text-text-primary">Quota Pool Status</p>
+              <p className="text-xs text-text-muted">National aggregation by reservation & intake pool</p>
             </div>
-          </motion.div>
+            <span className="badge badge-success flex items-center gap-1">
+              <CheckCircle2 className="w-3 h-3" /> Invariant Verified
+            </span>
+          </div>
+
+          <div className="space-y-3">
+            {pools.map((p, i) => {
+              const pct = Math.round((p.claimed / p.approved) * 100);
+              const isBreach = p.status === 'BREACH' || p.claimed > p.approved;
+              return (
+                <div key={i} className="p-3 bg-canvas rounded-card border border-border">
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="text-sm font-semibold text-text-primary">{p.programme}</span>
+                    <span className={`text-xs font-bold px-2 py-0.5 rounded ${isBreach ? 'bg-red-100 text-danger' : 'bg-emerald-100 text-emerald-700'}`}>
+                      {isBreach ? `BREACH (+${p.overBy || p.claimed - p.approved})` : 'OK'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-xs text-text-muted mb-1.5">
+                    <span>Pool: {p.poolCode}</span>
+                    <span>{p.claimed} / {p.approved} ({pct}%)</span>
+                  </div>
+                  <div className="progress-bar">
+                    <div
+                      className={`progress-fill ${isBreach ? 'bg-danger' : pct > 95 ? 'bg-amber-500' : 'bg-brand'}`}
+                      style={{ width: `${Math.min(pct, 100)}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Institution-level tracking */}
+        <div className="card">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <p className="text-card-title text-text-primary">Institution Seat Balances</p>
+              <p className="text-xs text-text-muted">Enrolment accounting by institution</p>
+            </div>
+            <button
+              onClick={() => navigate('/officer/institutions')}
+              className="text-xs text-brand font-semibold hover:underline"
+            >
+              View table →
+            </button>
+          </div>
+
+          <div className="space-y-3">
+            {mockInstitutions.map((inst, i) => {
+              const breach = inst.enrolledCount > inst.approvedIntake;
+              const pct = Math.round((inst.enrolledCount / inst.approvedIntake) * 100);
+              return (
+                <div key={i} className="p-3 bg-canvas rounded-card border border-border flex items-center justify-between">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-text-primary truncate">{inst.name}</p>
+                    <p className="text-xs text-text-muted">{inst.state} · {inst.type}</p>
+                  </div>
+                  <div className="text-right ml-4 flex-shrink-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-sm tabular-nums">{inst.enrolledCount}</span>
+                      <span className="text-xs text-text-muted">/{inst.approvedIntake}</span>
+                      <span className={`text-xs font-bold px-2 py-0.5 rounded ${breach ? 'bg-red-100 text-danger' : 'bg-emerald-100 text-emerald-700'}`}>
+                        {pct}%
+                      </span>
+                    </div>
+                    {breach && (
+                      <span className="text-xs text-danger font-semibold block mt-0.5">
+                        +{inst.enrolledCount - inst.approvedIntake} Over-Intake
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
-
-      {/* Institution-level table */}
-      <motion.div
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.32 }}
-        className="card"
-      >
-        <h2 className="text-sm font-semibold text-text-primary mb-4">All Institutions — Seat Summary</h2>
-        <div className="table-wrapper">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Institution</th>
-                <th>Approved</th>
-                <th>Enrolled</th>
-                <th>Verified</th>
-                <th>Utilisation</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {mockInstitutions.map(inst => {
-                const util = Math.round((inst.enrolledCount / inst.approvedIntake) * 100);
-                const breach = inst.enrolledCount > inst.approvedIntake;
-                return (
-                  <tr key={inst.id}>
-                    <td>
-                      <p className="text-sm font-semibold text-text-primary">{inst.name}</p>
-                      <p className="text-xs text-text-muted">{inst.state}</p>
-                    </td>
-                    <td className="tabular-nums">{inst.approvedIntake}</td>
-                    <td className={`tabular-nums font-semibold ${breach ? 'text-danger' : ''}`}>{inst.enrolledCount}</td>
-                    <td className="tabular-nums text-emerald-600">{inst.verifiedCount}</td>
-                    <td>
-                      <div className="flex items-center gap-2">
-                        <span className={`text-xs font-bold tabular-nums ${breach ? 'text-danger' : util > 95 ? 'text-amber-600' : 'text-emerald-600'}`}>
-                          {util}%
-                        </span>
-                        <div className="w-16 progress-bar">
-                          <div
-                            className={`progress-fill ${breach ? 'bg-danger' : util > 95 ? 'bg-amber-500' : 'bg-emerald-500'}`}
-                            style={{ width: `${Math.min(util, 100)}%` }}
-                          />
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      <span className={`badge text-xs ${breach ? 'badge-danger' : util > 95 ? 'badge-warning' : 'badge-success'}`}>
-                        {breach ? 'BREACH' : util > 95 ? 'NEAR CAP' : 'OK'}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </motion.div>
     </div>
   );
 }

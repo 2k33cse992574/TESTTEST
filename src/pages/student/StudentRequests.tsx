@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { ActivityTimeline } from '@/components/ui/ActivityTimeline';
 import { mockTimeline } from '@/data/mockData';
+import { api } from '@/api/client';
 import {
   MessageSquarePlus, CheckCircle2, Info, X, ChevronRight,
   Clock, AlertCircle, FileText, Send, Upload,
@@ -65,19 +66,28 @@ function NewRequestModal({ onClose, onSubmit }: { onClose: () => void; onSubmit:
 
   const handleSubmit = () => {
     setSubmitting(true);
+    const newReq: Request = {
+      id: `R-00${Math.floor(Math.random() * 900 + 100)}`,
+      type: selectedType?.label ?? reqType,
+      title: field ? `${selectedType?.label}: ${field}` : description.slice(0, 60),
+      status: 'Awaiting Review',
+      date: new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+      detail: description,
+    };
+    api.createStudentRequest({
+      studentId: 's1',
+      type: newReq.type,
+      title: newReq.title,
+      detail: newReq.detail,
+    }).then(res => {
+      if (res?.request?.id) newReq.id = res.request.id;
+    }).catch(() => {});
+
     setTimeout(() => {
       setSubmitting(false);
       setStep('done');
-      const newReq: Request = {
-        id: `R-00${Math.floor(Math.random() * 900 + 100)}`,
-        type: selectedType?.label ?? reqType,
-        title: field ? `${selectedType?.label}: ${field}` : description.slice(0, 60),
-        status: 'Open',
-        date: new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
-        detail: description,
-      };
       onSubmit(newReq);
-    }, 1400);
+    }, 1200);
   };
 
   return (
@@ -311,6 +321,16 @@ export default function StudentRequests() {
   const [requests,    setRequests]    = useState<Request[]>(INITIAL_REQUESTS);
   const [showNewForm, setShowNewForm] = useState(false);
   const [selected,    setSelected]    = useState<Request | null>(null);
+
+  useEffect(() => {
+    api.getStudentRequests('s1')
+      .then(res => {
+        if (res?.requests && res.requests.length) {
+          setRequests(res.requests);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const open     = requests.filter(r => r.status !== 'Resolved').length;
   const resolved = requests.filter(r => r.status === 'Resolved').length;

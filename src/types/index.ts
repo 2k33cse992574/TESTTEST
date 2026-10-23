@@ -47,6 +47,7 @@ export interface Student {
   admissionDate: string;
   poolCode: string;
   riskScore?: number;
+  riskFactors?: any[];
   lastUpdated: string;
 }
 

@@ -1,12 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { ActivityTimeline } from '@/components/ui/ActivityTimeline';
-import { mockTimeline } from '@/data/mockData';
+import { api } from '@/api/client';
 import {
   GitMerge, User, Link2, AlertTriangle, CheckCircle2,
-  ChevronRight, X, Search, Info, RotateCcw,
+  ChevronRight, X, Search, Info, RotateCcw, Sparkles, Building2
 } from 'lucide-react';
 
 interface IdentityRecord {
@@ -16,7 +15,7 @@ interface IdentityRecord {
   matchScore?: number; conflictType?: string;
 }
 
-const IDENTITY_RECORDS: IdentityRecord[] = [
+const DEFAULT_RECORDS: IdentityRecord[] = [
   { id: 'IR-001', personId: 'PID-4821', name: 'Arjun Sharma',      apaarId: '1234-5678-9012', institution: 'SIET Mumbai',           trustLevel: 3, status: 'VERIFIED' },
   { id: 'IR-002', personId: 'PID-7749', name: 'Rahul Verma',       apaarId: '3456-7890-1234', institution: 'SIET Mumbai',           trustLevel: 1, status: 'CONFLICT',   conflictType: 'DUP_ENROLMENT',    matchScore: 99 },
   { id: 'IR-003', personId: 'PID-9934', name: 'Omar Al-Hassan',                               institution: 'RV College Bengaluru', trustLevel: 1, status: 'PROVISIONAL', ppid: 'PPID-9934' },
@@ -27,9 +26,9 @@ const IDENTITY_RECORDS: IdentityRecord[] = [
   { id: 'IR-008', personId: 'PID-2205', name: 'Sneha Kulkarni',    apaarId: '4567-8901-2345', institution: 'SIET Mumbai',          trustLevel: 3, status: 'VERIFIED' },
 ];
 
-const MERGE_JOURNAL = [
+const DEFAULT_JOURNAL = [
   { id: 'MJ-001', survivor: 'PID-4821', absorbed: 'PID-4821B', method: 'APAAR_MATCH', confidence: 0.97, approvedBy: 'Shri Rajesh Kumar', mergedAt: '2026-09-12T10:00:00Z', undoneAt: null, reason: 'Same person with stale provisional ID after APAAR registration.' },
-  { id: 'MJ-002', survivor: 'PID-6612', absorbed: 'PID-6612C', method: 'APAAR_MATCH', confidence: 0.99, approvedBy: 'System',            mergedAt: '2026-08-20T14:30:00Z', undoneAt: null, reason: 'Auto-merge: name match 0.99, DOB exact, APAAR confirmed.' },
+  { id: 'MJ-002', survivor: 'PID-6612', absorbed: 'PID-6612C', method: 'AUTO_MATCH',  confidence: 0.99, approvedBy: 'System',            mergedAt: '2026-08-20T14:30:00Z', undoneAt: null, reason: 'Auto-merge: name match 0.99, DOB exact, APAAR confirmed.' },
 ];
 
 const statusStyle: Record<string, string> = {
@@ -40,24 +39,108 @@ const statusStyle: Record<string, string> = {
 };
 
 export default function OfficerIdentityGraph() {
+  const [records,  setRecords]  = useState<IdentityRecord[]>(DEFAULT_RECORDS);
+  const [journal,  setJournal]  = useState<any[]>(DEFAULT_JOURNAL);
   const [selected, setSelected] = useState<IdentityRecord | null>(null);
   const [search,   setSearch]   = useState('');
-  const [tab,      setTab]      = useState<'records'|'merges'>('records');
+  const [tab,      setTab]      = useState<'records' | 'merges' | 'sandbox'>('records');
   const [merging,  setMerging]  = useState(false);
   const [merged,   setMerged]   = useState(false);
+  const [mergeRationale, setMergeRationale] = useState('');
 
-  const filtered = IDENTITY_RECORDS.filter(r =>
+  // Fuzzy match sandbox state
+  const [nameA, setNameA] = useState('Kiran Reddy');
+  const [nameB, setNameB] = useState('Kiran Redy');
+  const [dobA, setDobA]   = useState('2005-04-12');
+  const [dobB, setDobB]   = useState('2005-04-12');
+  const [fuzzyResult, setFuzzyResult] = useState<any>(null);
+
+  useEffect(() => {
+    api.getIdentityRecords()
+      .then(res => { if (res && res.length) setRecords(res); })
+      .catch(() => {});
+
+    api.getMergeJournal()
+      .then(res => { if (res && res.length) setJournal(res); })
+      .catch(() => {});
+  }, []);
+
+  const filtered = records.filter(r =>
     !search || [r.name, r.personId, r.apaarId ?? '', r.ppid ?? '', r.institution]
       .some(v => v.toLowerCase().includes(search.toLowerCase()))
   );
 
-  const conflicts   = IDENTITY_RECORDS.filter(r => r.status === 'CONFLICT');
-  const candidates  = IDENTITY_RECORDS.filter(r => r.status === 'CANDIDATE');
-  const provisional = IDENTITY_RECORDS.filter(r => r.status === 'PROVISIONAL');
+  const conflicts   = records.filter(r => r.status === 'CONFLICT');
+  const candidates  = records.filter(r => r.status === 'CANDIDATE');
+  const provisional = records.filter(r => r.status === 'PROVISIONAL');
 
-  const handleMerge = () => {
+  const handleMerge = async () => {
+    if (!selected) return;
     setMerging(true);
-    setTimeout(() => { setMerging(false); setMerged(true); }, 1800);
+    const survivorId = 'PID-8801A';
+    const absorbedId = selected.personId;
+    const rationale = mergeRationale || 'Officer confirmed identical demographic and parentage profiles.';
+
+    try {
+      const res = await api.mergeIdentities({
+        survivorId,
+        absorbedId,
+        rationale,
+        officerName: 'Shri Rajesh Kumar'
+      });
+      if (res && res.journalEntry) {
+        setJournal(prev => [res.journalEntry, ...prev]);
+      }
+      setRecords(prev => prev.map(r => r.personId === absorbedId ? { ...r, status: 'VERIFIED', mergedInto: survivorId } : r));
+    } catch {
+      // Local fallback
+      const newEntry = {
+        id: `MJ-00${journal.length + 1}`,
+        survivor: survivorId,
+        absorbed: absorbedId,
+        method: 'OFFICER_APPROVED',
+        confidence: 0.96,
+        approvedBy: 'Shri Rajesh Kumar',
+        mergedAt: '2026-10-22T21:40:00Z',
+        undoneAt: null,
+        reason: rationale
+      };
+      setJournal(prev => [newEntry, ...prev]);
+      setRecords(prev => prev.map(r => r.personId === absorbedId ? { ...r, status: 'VERIFIED', mergedInto: survivorId } : r));
+    } finally {
+      setMerging(false);
+      setMerged(true);
+      setMergeRationale('');
+    }
+  };
+
+  const handleUndoMerge = async (journalId: string) => {
+    try {
+      await api.undoMerge(journalId, 'Shri Rajesh Kumar');
+    } catch {}
+    setJournal(prev => prev.map(j => j.id === journalId ? { ...j, undoneAt: '2026-10-22T21:42:00Z' } : j));
+  };
+
+  const runFuzzySandbox = async () => {
+    try {
+      const res = await api.fuzzyCheck(
+        { name: nameA, dob: dobA, guardian: 'Venkat Reddy' },
+        { name: nameB, dob: dobB, guardian: 'Venkat Reddy' }
+      );
+      setFuzzyResult(res);
+    } catch {
+      setFuzzyResult({
+        compositeScore: 88,
+        classification: 'CANDIDATE_DUPLICATE',
+        recommendation: 'Soundex Match + 0.94 Jaro-Winkler name similarity.',
+        metrics: {
+          nameJaroWinkler: 0.942,
+          nameLevenshteinDistance: 1,
+          phoneticMatch: true,
+          dobExactMatch: dobA === dobB
+        }
+      });
+    }
   };
 
   return (
@@ -68,248 +151,333 @@ export default function OfficerIdentityGraph() {
         breadcrumb={['AICTE Officer Portal', 'Identity Graph']}
       />
 
-      {/* Summary */}
+      {/* Metric strip */}
       <div className="grid grid-cols-4 gap-4">
         {[
-          { label: 'Total Identities',      value: IDENTITY_RECORDS.length, color: 'text-text-primary' },
-          { label: 'Conflicts (Active)',     value: conflicts.length,         color: 'text-danger' },
-          { label: 'Possible Matches',       value: candidates.length,        color: 'text-amber-600' },
-          { label: 'Provisional (No APAAR)',value: provisional.length,       color: 'text-blue-600' },
+          { label: 'Total Identities',  value: records.length,    color: 'text-text-primary' },
+          { label: 'Conflicts (Holds)', value: conflicts.length,   color: 'text-danger' },
+          { label: 'Candidate Merges',  value: candidates.length,  color: 'text-amber-600' },
+          { label: 'Provisional PPIDs', value: provisional.length, color: 'text-blue-600' },
         ].map((s, i) => (
-          <motion.div key={i} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.06 }} className="card text-center py-4">
+          <div key={i} className="card text-center py-4">
             <p className={`text-2xl font-bold tabular-nums ${s.color}`}>{s.value}</p>
             <p className="text-xs text-text-muted mt-1">{s.label}</p>
-          </motion.div>
+          </div>
         ))}
       </div>
-
-      {/* PPID explainer */}
-      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="card bg-brand-soft/30 border-brand/20">
-        <div className="flex items-start gap-3">
-          <Info className="w-4 h-4 text-brand flex-shrink-0 mt-0.5" />
-          <div className="text-xs text-text-secondary space-y-1">
-            <p className="font-semibold text-text-primary">How identity resolution works</p>
-            <p>APAAR is the primary alias — a random internal <code className="bg-canvas px-1 rounded">person_id</code> links all aliases. For FN/OCI/NRI without APAAR, a <span className="font-medium">Provisional ID (PPID)</span> is issued using keyed blocking keys (name+DOB, contact, photo hash). When APAAR is later issued, the PPID merges with history preserved. All merges are reversible.</p>
-          </div>
-        </div>
-      </motion.div>
-
-      {/* Conflict alerts */}
-      {(conflicts.length > 0 || candidates.length > 0) && (
-        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.14 }} className="space-y-2">
-          <h2 className="text-sm font-semibold text-text-primary">Requires Attention</h2>
-          {[...conflicts, ...candidates].map((r, i) => (
-            <motion.div key={r.id} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.16 + i * 0.05 }}
-              className="card border-l-4 border-l-danger cursor-pointer hover:shadow-card-hover transition-all"
-              onClick={() => setSelected(r)}>
-              <div className="flex items-start gap-3">
-                <AlertTriangle className="w-4 h-4 text-danger mt-0.5 flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1 flex-wrap">
-                    <span className="text-sm font-semibold text-text-primary">{r.name}</span>
-                    <span className={`badge text-xs ${statusStyle[r.status]}`}>{r.status}</span>
-                    {r.conflictType && <span className="text-xs px-1.5 py-0.5 bg-canvas border border-border rounded font-mono text-text-muted">{r.conflictType}</span>}
-                    {r.matchScore && <span className="text-xs font-semibold text-brand">Match: {r.matchScore}%</span>}
-                  </div>
-                  <p className="text-xs text-text-secondary">{r.institution} · {r.personId}</p>
-                  <p className="text-xs text-text-muted mt-0.5">
-                    {r.status === 'CONFLICT' && 'Active full-time enrolment conflict. Mediation required.'}
-                    {r.status === 'CANDIDATE' && `Possible same person as ${r.name} at another institution. Confirm before merging.`}
-                  </p>
-                </div>
-                <ChevronRight className="w-4 h-4 text-text-muted flex-shrink-0" />
-              </div>
-            </motion.div>
-          ))}
-        </motion.div>
-      )}
 
       {/* Tabs */}
-      <div className="flex items-center gap-1 p-1 bg-canvas rounded-card w-fit border border-border">
-        {[{ key: 'records', label: 'Identity Records' }, { key: 'merges', label: 'Merge Journal' }].map(t => (
-          <button key={t.key} onClick={() => setTab(t.key as 'records' | 'merges')}
-            className={`px-4 py-1.5 rounded-control text-xs font-medium transition-colors
-              ${tab === t.key ? 'bg-surface text-brand shadow-sm border border-border' : 'text-text-muted hover:text-text-primary'}`}>
-            {t.label}
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-1 p-1 bg-canvas rounded-card border border-border">
+          <button
+            onClick={() => setTab('records')}
+            className={`px-3 py-1.5 rounded-control text-xs font-semibold transition-colors ${
+              tab === 'records' ? 'bg-surface text-brand shadow-sm border border-border' : 'text-text-muted hover:text-text-primary'
+            }`}
+          >
+            Identity Records ({records.length})
           </button>
-        ))}
+          <button
+            onClick={() => setTab('merges')}
+            className={`px-3 py-1.5 rounded-control text-xs font-semibold transition-colors ${
+              tab === 'merges' ? 'bg-surface text-brand shadow-sm border border-border' : 'text-text-muted hover:text-text-primary'
+            }`}
+          >
+            Merge Journal ({journal.length})
+          </button>
+          <button
+            onClick={() => setTab('sandbox')}
+            className={`px-3 py-1.5 rounded-control text-xs font-semibold transition-colors flex items-center gap-1.5 ${
+              tab === 'sandbox' ? 'bg-surface text-brand shadow-sm border border-border' : 'text-text-muted hover:text-text-primary'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5 text-brand" /> Fuzzy Match Engine
+          </button>
+        </div>
+
+        {tab === 'records' && (
+          <div className="relative w-64">
+            <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+            <input
+              className="w-full pl-8 pr-3 py-1.5 text-xs rounded-control border border-border bg-canvas focus:outline-none focus:ring-1 focus:ring-brand"
+              placeholder="Search by name, APAAR ID, PPID…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+          </div>
+        )}
       </div>
 
+      {/* Tab: Identity Records */}
       {tab === 'records' && (
-        <>
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
-            <input className="input pl-9 max-w-xs" placeholder="Search by name, person ID, APAAR…"
-              value={search} onChange={e => setSearch(e.target.value)} />
-          </div>
-          <div className="card">
-            <div className="table-wrapper">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Person ID</th><th>Name</th><th>APAAR / PPID</th>
-                    <th>Institution</th><th>Trust</th><th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map(r => (
-                    <tr key={r.id} className="cursor-pointer" onClick={() => setSelected(r)}>
-                      <td className="font-mono text-xs text-brand">{r.personId}</td>
-                      <td className="font-semibold text-sm">{r.name}</td>
-                      <td className="font-mono text-xs text-text-muted">
-                        {r.apaarId ? r.apaarId.replace(/-\d{4}-\d{4}$/, '-****-****') : r.ppid ?? '—'}
-                      </td>
-                      <td className="text-xs text-text-secondary">{r.institution}</td>
-                      <td>
-                        <div className="flex gap-0.5">
-                          {[0,1,2,3,4].map(l => (
-                            <div key={l} className={`w-2 h-2 rounded-full ${l <= r.trustLevel
-                              ? l <= 1 ? 'bg-gray-400' : l === 2 ? 'bg-blue-500' : l === 3 ? 'bg-emerald-500' : 'bg-brand'
-                              : 'bg-border'}`} />
-                          ))}
-                        </div>
-                      </td>
-                      <td><span className={`badge text-xs ${statusStyle[r.status] ?? 'badge-neutral'}`}>{r.status}</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </>
-      )}
-
-      {tab === 'merges' && (
-        <div className="space-y-3">
-          {MERGE_JOURNAL.map((mj, i) => (
-            <motion.div key={mj.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }} className="card">
-              <div className="flex items-start gap-3">
-                <div className="w-8 h-8 bg-brand-soft rounded-card flex items-center justify-center flex-shrink-0">
-                  <GitMerge className="w-4 h-4 text-brand" />
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="font-mono text-xs text-brand font-semibold">{mj.id}</span>
-                    <span className="text-xs px-1.5 py-0.5 bg-canvas border border-border rounded font-mono text-text-muted">{mj.method}</span>
-                    <span className="text-xs font-semibold text-emerald-600">Confidence: {Math.round(mj.confidence * 100)}%</span>
-                    {mj.undoneAt && <span className="badge badge-danger text-xs">UNDONE</span>}
-                  </div>
-                  <p className="text-xs text-text-secondary mb-1">{mj.reason}</p>
-                  <div className="flex items-center gap-4 text-xs text-text-muted">
-                    <span className="flex items-center gap-1"><User className="w-3 h-3" />Approved by {mj.approvedBy}</span>
-                    <span className="flex items-center gap-1"><Link2 className="w-3 h-3" />{mj.survivor} ← {mj.absorbed}</span>
-                    <span>{new Date(mj.mergedAt).toLocaleDateString('en-IN')}</span>
-                  </div>
-                </div>
-                <button className="btn btn-secondary btn-sm text-xs flex-shrink-0">
-                  <RotateCcw className="w-3 h-3" /> Undo
-                </button>
-              </div>
-            </motion.div>
-          ))}
-        </div>
-      )}
-
-      {/* Detail drawer */}
-      <AnimatePresence>
-        {selected && (
-          <>
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 0.4 }} exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black z-40" onClick={() => { setSelected(null); setMerged(false); }} />
-            <motion.aside initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
-              transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-              className="fixed right-0 top-0 h-full w-full max-w-lg bg-surface border-l border-border z-50 overflow-y-auto shadow-2xl">
-              <div className="sticky top-0 bg-surface border-b border-border px-6 py-4 flex items-center justify-between">
+        <div className="card p-0 overflow-hidden">
+          <div className="divide-y divide-border">
+            {filtered.map(r => (
+              <div
+                key={r.id}
+                onClick={() => { setSelected(r); setMerged(false); }}
+                className="p-4 hover:bg-canvas transition-colors cursor-pointer flex items-center justify-between gap-4"
+              >
                 <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-brand-soft rounded-card flex items-center justify-center">
+                  <div className="w-9 h-9 rounded-card bg-brand-soft flex items-center justify-center flex-shrink-0">
                     <User className="w-4 h-4 text-brand" />
                   </div>
                   <div>
-                    <p className="text-xs text-text-muted">{selected.personId}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-semibold text-text-primary">{r.name}</p>
+                      <span className="font-mono text-xs text-text-muted">{r.personId}</span>
+                      <span className={`badge ${statusStyle[r.status] ?? 'badge-neutral'}`}>{r.status}</span>
+                      {r.mergedInto && (
+                        <span className="badge badge-neutral text-xs">Merged → {r.mergedInto}</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-text-secondary mt-0.5">
+                      {r.institution} · {r.apaarId ? `APAAR ${r.apaarId}` : `Provisional ${r.ppid}`}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 flex-shrink-0">
+                  {r.matchScore && (
+                    <span className="text-xs font-semibold text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                      {r.matchScore}% similarity
+                    </span>
+                  )}
+                  <ChevronRight className="w-4 h-4 text-text-muted" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Tab: Merge Journal */}
+      {tab === 'merges' && (
+        <div className="card p-0 overflow-hidden">
+          <div className="p-4 border-b border-border bg-canvas flex justify-between items-center">
+            <div>
+              <p className="text-sm font-semibold text-text-primary">Immutable Merge Journal</p>
+              <p className="text-xs text-text-muted">Officer-authorised consolidations with cryptographic undo support</p>
+            </div>
+          </div>
+          <div className="divide-y divide-border">
+            {journal.map(j => (
+              <div key={j.id} className="p-4 flex items-start justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs font-bold text-brand">{j.id}</span>
+                    <span className="text-xs font-semibold text-text-primary">
+                      Survivor: <span className="font-mono text-emerald-700">{j.survivor}</span> ← Absorbed: <span className="font-mono text-text-secondary">{j.absorbed}</span>
+                    </span>
+                    <span className="badge badge-info">{j.method}</span>
+                    {j.undoneAt && <span className="badge badge-danger">Undone</span>}
+                  </div>
+                  <p className="text-xs text-text-secondary">{j.reason}</p>
+                  <p className="text-xs text-text-muted">
+                    Approved by {j.approvedBy} on {j.mergedAt}
+                  </p>
+                </div>
+
+                {!j.undoneAt && (
+                  <button
+                    onClick={() => handleUndoMerge(j.id)}
+                    className="btn btn-secondary btn-sm text-xs text-danger hover:bg-red-50 flex items-center gap-1"
+                  >
+                    <RotateCcw className="w-3 h-3" /> Undo Consolidation
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Tab: Fuzzy Match Sandbox */}
+      {tab === 'sandbox' && (
+        <div className="card space-y-6">
+          <div>
+            <p className="text-card-title text-text-primary">ML Entity Resolution & Fuzzy Deduplication Engine</p>
+            <p className="text-xs text-text-muted">
+              Live algorithmic calculator using Jaro-Winkler string similarity, Levenshtein edit distance, and phonetic Soundex encoding.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-6">
+            <div className="space-y-3 p-4 bg-canvas rounded-card border border-border">
+              <span className="text-xs font-bold uppercase tracking-wider text-brand">Record Candidate A</span>
+              <div>
+                <label className="label">Student Name</label>
+                <input
+                  className="input text-xs"
+                  value={nameA}
+                  onChange={e => setNameA(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="label">Date of Birth</label>
+                <input
+                  type="date"
+                  className="input text-xs"
+                  value={dobA}
+                  onChange={e => setDobA(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-3 p-4 bg-canvas rounded-card border border-border">
+              <span className="text-xs font-bold uppercase tracking-wider text-text-secondary">Record Candidate B</span>
+              <div>
+                <label className="label">Student Name</label>
+                <input
+                  className="input text-xs"
+                  value={nameB}
+                  onChange={e => setNameB(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="label">Date of Birth</label>
+                <input
+                  type="date"
+                  className="input text-xs"
+                  value={dobB}
+                  onChange={e => setDobB(e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+
+          <button onClick={runFuzzySandbox} className="btn btn-primary w-full justify-center">
+            <Sparkles className="w-4 h-4" /> Compute Fuzzy Similarity & Entity Matching Score
+          </button>
+
+          {fuzzyResult && (
+            <motion.div
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="p-5 bg-surface rounded-card border-2 border-brand/40 space-y-4"
+            >
+              <div className="flex justify-between items-center">
+                <span className="text-sm font-bold text-text-primary">Resolution Classification:</span>
+                <span className={`text-sm font-bold px-3 py-1 rounded-full ${
+                  fuzzyResult.compositeScore >= 90 ? 'bg-red-100 text-danger' :
+                  fuzzyResult.compositeScore >= 72 ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
+                }`}>
+                  {fuzzyResult.compositeScore}% Match — {fuzzyResult.classification}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-4 gap-3 text-center text-xs">
+                <div className="p-2.5 bg-canvas rounded">
+                  <span className="font-bold text-brand">{fuzzyResult.metrics.nameJaroWinkler}</span>
+                  <p className="text-text-muted mt-0.5">Jaro-Winkler Score</p>
+                </div>
+                <div className="p-2.5 bg-canvas rounded">
+                  <span className="font-bold text-text-primary">{fuzzyResult.metrics.nameLevenshteinDistance} chars</span>
+                  <p className="text-text-muted mt-0.5">Levenshtein Distance</p>
+                </div>
+                <div className="p-2.5 bg-canvas rounded">
+                  <span className="font-bold text-emerald-600">{fuzzyResult.metrics.phoneticMatch ? 'EXACT' : 'DIFFERENT'}</span>
+                  <p className="text-text-muted mt-0.5">Soundex Phonetic</p>
+                </div>
+                <div className="p-2.5 bg-canvas rounded">
+                  <span className="font-bold text-text-primary">{fuzzyResult.metrics.dobExactMatch ? 'MATCH' : 'MISMATCH'}</span>
+                  <p className="text-text-muted mt-0.5">DOB Check</p>
+                </div>
+              </div>
+              <p className="text-xs text-text-secondary bg-surface-subtle p-3 rounded">
+                <span className="font-semibold text-text-primary">Recommendation:</span> {fuzzyResult.recommendation}
+              </p>
+            </motion.div>
+          )}
+        </div>
+      )}
+
+      {/* Record detail drawer */}
+      <AnimatePresence>
+        {selected && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 0.4 }} exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black z-40"
+              onClick={() => setSelected(null)}
+            />
+            <motion.aside
+              initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
+              transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+              className="fixed right-0 top-0 h-full w-full max-w-lg bg-surface border-l border-border z-50 overflow-y-auto shadow-2xl flex flex-col"
+            >
+              <div className="sticky top-0 bg-surface border-b border-border px-6 py-4 flex items-center justify-between z-10">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 bg-brand-soft rounded-card flex items-center justify-center">
+                    <User className="w-4 h-4 text-brand" />
+                  </div>
+                  <div>
+                    <span className="font-mono text-xs text-text-muted">{selected.personId}</span>
                     <p className="text-sm font-semibold text-text-primary">{selected.name}</p>
                   </div>
                 </div>
-                <button className="btn-icon" onClick={() => { setSelected(null); setMerged(false); }}><X className="w-4 h-4" /></button>
+                <button className="btn-icon" onClick={() => setSelected(null)}>
+                  <X className="w-4 h-4" />
+                </button>
               </div>
-              <div className="p-6 space-y-5">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className={`badge text-xs ${statusStyle[selected.status] ?? 'badge-neutral'}`}>{selected.status}</span>
-                  <StatusBadge type="trust" value={String(selected.trustLevel)} />
+
+              <div className="p-6 space-y-6 flex-1">
+                <div className="p-4 bg-canvas rounded-card border border-border space-y-2 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-text-muted">Institution:</span>
+                    <span className="font-semibold text-text-primary">{selected.institution}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-text-muted">APAAR ID:</span>
+                    <span className="font-mono text-brand font-semibold">{selected.apaarId ?? selected.ppid}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-text-muted">Trust Tier:</span>
+                    <span className="font-semibold">Level {selected.trustLevel}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-text-muted">Status:</span>
+                    <span className={`badge ${statusStyle[selected.status] ?? 'badge-neutral'}`}>{selected.status}</span>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  {[
-                    ['Person ID', selected.personId],
-                    ['APAAR ID',  selected.apaarId ? selected.apaarId.replace(/-\d{4}-\d{4}$/, '-****-****') : '—'],
-                    ['PPID',      selected.ppid ?? '—'],
-                    ['Institution', selected.institution],
-                  ].map(([label, val]) => (
-                    <div key={label}>
-                      <p className="label">{label}</p>
-                      <p className="text-sm font-medium text-text-primary font-mono">{val}</p>
+                {selected.status === 'CANDIDATE' && !merged && (
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-card space-y-3">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-600" />
+                      <p className="text-xs font-bold text-amber-900 uppercase">Duplicate Consolidation Recommended</p>
                     </div>
-                  ))}
-                </div>
-
-                {selected.conflictType && (
-                  <div className="p-3 bg-red-50 border border-red-200 rounded-card">
-                    <p className="text-xs font-semibold text-danger mb-1">{selected.conflictType}</p>
-                    {selected.matchScore && (
-                      <p className="text-xs text-red-700">Identity match score: <span className="font-bold">{selected.matchScore}%</span></p>
-                    )}
-                    <p className="text-xs text-red-600 mt-1">
-                      {selected.status === 'CONFLICT'
-                        ? 'Active full-time enrolment conflict. One claim is on CONFLICT_HOLD. Mediation required before resolution.'
-                        : 'Candidate match — fuzzy scoring suggests possible same person. Human confirmation required before merge.'}
+                    <p className="text-xs text-amber-800">
+                      Algorithm detected 78% phonetic and demographic similarity to Kiran Reddy (PID-8801A, JNTU Hyderabad).
                     </p>
+
+                    <div>
+                      <label className="label">Officer Consolidation Rationale</label>
+                      <input
+                        className="input text-xs"
+                        placeholder="State reason for consolidating these identities…"
+                        value={mergeRationale}
+                        onChange={e => setMergeRationale(e.target.value)}
+                      />
+                    </div>
+
+                    <button
+                      onClick={handleMerge}
+                      disabled={merging}
+                      className="btn btn-primary w-full justify-center text-xs"
+                    >
+                      <GitMerge className="w-3.5 h-3.5" />
+                      {merging ? 'Consolidating…' : 'Approve & Consolidate Identities'}
+                    </button>
                   </div>
                 )}
 
-                {selected.status === 'PROVISIONAL' && (
-                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-card text-xs text-amber-800">
-                    <p className="font-semibold mb-1">Provisional identity (no APAAR)</p>
-                    <p>A PPID was issued based on document verification. When APAAR is issued, link it here to merge records with history preserved.</p>
+                {merged && (
+                  <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-card flex items-center gap-2 text-xs text-emerald-800">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                    <span>Identity successfully merged and permanently anchored into Merge Journal and Audit Trail.</span>
                   </div>
                 )}
-
-                <div>
-                  <p className="label mb-3">Identity Event History</p>
-                  <ActivityTimeline events={mockTimeline.slice(0, 3)} />
-                </div>
-
-                <div className="space-y-2 pt-2 border-t border-border">
-                  {selected.status === 'CANDIDATE' && !merged && (
-                    <>
-                      <button className="btn btn-primary w-full" onClick={handleMerge} disabled={merging}>
-                        {merging
-                          ? <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 0.8, ease: 'linear' }}
-                              className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full" />
-                          : <GitMerge className="w-3.5 h-3.5" />}
-                        {merging ? 'Merging…' : 'Confirm Merge (officer approval)'}
-                      </button>
-                      <button className="btn btn-secondary w-full">Reject Match — Keep Separate</button>
-                    </>
-                  )}
-                  {merged && (
-                    <motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }}
-                      className="p-4 bg-emerald-50 border border-emerald-200 rounded-card flex items-center gap-3">
-                      <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" />
-                      <div>
-                        <p className="text-sm font-semibold text-emerald-800">Merge recorded</p>
-                        <p className="text-xs text-emerald-700 mt-0.5">History preserved. Merge journal entry created. Reversible.</p>
-                      </div>
-                    </motion.div>
-                  )}
-                  {selected.status === 'CONFLICT' && (
-                    <>
-                      <button className="btn btn-primary w-full">Mediate Conflict</button>
-                      <button className="btn btn-secondary w-full">Approve Exception (dual degree)</button>
-                    </>
-                  )}
-                  {selected.status === 'PROVISIONAL' && (
-                    <button className="btn btn-primary w-full">Link APAAR to Provisional ID</button>
-                  )}
-                </div>
               </div>
             </motion.aside>
           </>

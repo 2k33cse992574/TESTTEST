@@ -37,10 +37,34 @@ const MOCK_USERS: Record<UserRole, User> = {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<User | null>(() => {
+    try {
+      const saved = localStorage.getItem('apaar_user_role') as UserRole | null;
+      if (saved && MOCK_USERS[saved]) return MOCK_USERS[saved];
+      // Check current route to provide seamless default
+      const path = typeof window !== 'undefined' ? window.location.pathname : '';
+      if (path.startsWith('/officer')) return MOCK_USERS['officer'];
+      if (path.startsWith('/institution')) return MOCK_USERS['institution'];
+      if (path.startsWith('/student')) return MOCK_USERS['student'];
+      return MOCK_USERS['student'];
+    } catch {
+      return MOCK_USERS['student'];
+    }
+  });
 
-  const login = (role: UserRole) => setUser(MOCK_USERS[role]);
-  const logout = () => setUser(null);
+  const login = (role: UserRole) => {
+    try {
+      localStorage.setItem('apaar_user_role', role);
+    } catch {}
+    setUser(MOCK_USERS[role]);
+  };
+
+  const logout = () => {
+    try {
+      localStorage.removeItem('apaar_user_role');
+    } catch {}
+    setUser(null);
+  };
 
   return (
     <AuthContext.Provider value={{ user, login, logout, isAuthenticated: !!user }}>

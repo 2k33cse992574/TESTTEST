@@ -5,17 +5,6 @@ import {
   BookOpen, BarChart3, Scale, History, QrCode, GitMerge,
 } from 'lucide-react';
 
-const NAV = [
-  { label: 'Overview',       path: '/officer' },
-  { label: 'Institutions',   path: '/officer/institutions' },
-  { label: 'Enrolments',     path: '/officer/enrolments' },
-  { label: 'Integrity Queue',path: '/officer/queue' },
-  { label: 'Seat Ledger',    path: '/officer/seats' },
-  { label: 'Policy Studio',  path: '/officer/policy' },
-  { label: 'Audit Trail',    path: '/officer/audit' },
-  { label: 'Reports',        path: '/officer/reports' },
-];
-
 const RAIL = [
   { icon: LayoutDashboard, label: 'Overview',        path: '/officer' },
   { icon: Building2,       label: 'Institutions',    path: '/officer/institutions' },
@@ -31,7 +20,7 @@ const RAIL = [
 
 export default function OfficerShell() {
   return (
-    <AppShell navItems={NAV} railItems={RAIL}>
+    <AppShell navItems={[]} railItems={RAIL}>
       <Outlet />
     </AppShell>
   );

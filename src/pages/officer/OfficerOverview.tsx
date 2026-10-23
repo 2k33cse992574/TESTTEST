@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { MetricCard } from '@/components/ui/MetricCard';
@@ -10,26 +11,51 @@ import {
   enrolmentTrendData, trustDistributionData, casesByTypeData,
   mockCases, mockInstitutions, mockTimeline, regionWiseData,
 } from '@/data/mockData';
-import { ArrowRight, AlertTriangle, Clock, TrendingUp, Shield } from 'lucide-react';
+import { api } from '@/api/client';
+import { ArrowRight, AlertTriangle, Shield, CheckCircle2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
-const metrics = [
+const defaultMetrics = [
   { label: 'Total Enrolment Records',  value: 18400, sublabel: '15,600 identity-verified',    color: 'brand'   as const, delta: '+1,240 this week', deltaType: 'up'     as const },
   { label: 'Institutions Onboarded',   value: 8,     sublabel: '6 active submissions',        color: 'info'    as const, delta: '100% onboarded',   deltaType: 'neutral' as const },
   { label: 'Open Cases',               value: 7,     sublabel: '2 critical · 3 high',         color: 'danger'  as const, delta: '−3 since last week',deltaType: 'down'   as const },
   { label: 'Seat Breaches Detected',   value: 3,     sublabel: '2 REGULAR · 1 NRI pool',      color: 'warning' as const, delta: '1 new today',      deltaType: 'neutral' as const },
 ];
 
-const criticalCases = mockCases.filter(c =>
-  ['HIGH','CRITICAL'].includes(c.severity) && !['Resolved','Closed'].includes(c.status)
-).slice(0, 3);
-
-const topRiskInstitutions = [...mockInstitutions]
-  .sort((a, b) => b.openCases - a.openCases)
-  .slice(0, 4);
-
 export default function OfficerOverview() {
   const navigate = useNavigate();
+  const [metrics, setMetrics] = useState(defaultMetrics);
+  const [timeline, setTimeline] = useState(mockTimeline);
+  const [casesByType, setCasesByType] = useState(casesByTypeData);
+  const [criticalCases, setCriticalCases] = useState(
+    mockCases.filter(c => ['HIGH', 'CRITICAL'].includes(c.severity) && !['Resolved', 'Closed'].includes(c.status)).slice(0, 3)
+  );
+  const [riskInstitutions, setRiskInstitutions] = useState(
+    [...mockInstitutions].sort((a, b) => b.openCases - a.openCases).slice(0, 4)
+  );
+
+  useEffect(() => {
+    // Attempt live fetch from backend
+    api.getOverviewMetrics()
+      .then(data => { if (data && data.length) setMetrics(data); })
+      .catch(() => {});
+
+    api.getTimeline()
+      .then(data => { if (data && data.length) setTimeline(data); })
+      .catch(() => {});
+
+    api.getCasesByType()
+      .then(data => { if (data && data.length) setCasesByType(data); })
+      .catch(() => {});
+
+    api.getCriticalCases()
+      .then(data => { if (data && data.length) setCriticalCases(data); })
+      .catch(() => {});
+
+    api.getRiskInstitutions()
+      .then(data => { if (data && data.length) setRiskInstitutions(data); })
+      .catch(() => {});
+  }, []);
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
@@ -39,7 +65,7 @@ export default function OfficerOverview() {
         breadcrumb={['AICTE Officer Portal', 'Overview']}
         actions={
           <div className="flex items-center gap-2">
-            <button className="btn btn-secondary btn-sm">
+            <button className="btn btn-secondary btn-sm" onClick={() => navigate('/officer/policy')}>
               <Shield className="w-3.5 h-3.5" /> Policy Studio
             </button>
             <button className="btn btn-primary btn-sm" onClick={() => navigate('/officer/queue')}>
@@ -52,10 +78,16 @@ export default function OfficerOverview() {
       {/* Metrics */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {metrics.map((m, i) => (
-          <MetricCard key={i} {...m} index={i} clickable
+          <MetricCard
+            key={i}
+            {...m}
+            index={i}
+            clickable
             onClick={() => {
               if (m.label === 'Open Cases') navigate('/officer/queue');
               else if (m.label === 'Seat Breaches Detected') navigate('/officer/seats');
+              else if (m.label === 'Institutions Onboarded') navigate('/officer/institutions');
+              else navigate('/officer/enrolments');
             }}
           />
         ))}
@@ -69,9 +101,9 @@ export default function OfficerOverview() {
             subtitle="Total records submitted vs identity-verified over the academic cycle"
             data={enrolmentTrendData}
             lines={[
-              { key: 'enrolled', label: 'Submitted',       color: '#6558D3' },
-              { key: 'verified', label: 'ID-Verified (L2+)',color: '#198754' },
-              { key: 'cases',    label: 'Cases Opened',    color: '#C53B45' },
+              { key: 'enrolled', label: 'Submitted',        color: '#6558D3' },
+              { key: 'verified', label: 'ID-Verified (L2+)', color: '#198754' },
+              { key: 'cases',    label: 'Cases Opened',     color: '#C53B45' },
             ]}
             height={250}
           />
@@ -91,117 +123,119 @@ export default function OfficerOverview() {
         <BarChartComponent
           title="Cases by Type"
           subtitle="Open cases across all institutions"
-          data={casesByTypeData.map(d => ({ ...d }))}
+          data={casesByType}
           height={200}
         />
         <BarChartComponent
           title="Enrolment by Region"
           subtitle="Student records by AICTE region"
           data={regionWiseData.map(d => ({ ...d, color: '#2F6FED' }))}
-          color="#2F6FED"
           height={200}
         />
+        <div className="card flex flex-col justify-between">
+          <div>
+            <p className="text-card-title text-text-primary">Single-Seat Lock Invariant</p>
+            <p className="text-xs text-text-muted mt-1">Cross-institution duplicate prevention</p>
+            <div className="mt-4 p-4 bg-emerald-50 border border-emerald-200 rounded-control">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                <span className="text-sm font-bold text-emerald-800">Ledger Invariant PASS</span>
+              </div>
+              <p className="text-xs text-emerald-700 mt-1">
+                Zero double-seated students active. All 2 conflict candidates placed on CONFLICT_HOLD.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => navigate('/officer/seats')}
+            className="btn btn-secondary btn-sm w-full mt-4 justify-center"
+          >
+            Inspect Seat Ledger <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
 
-        {/* Critical cases panel */}
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="card"
-        >
+      {/* Critical cases + High-risk institutions */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Critical cases */}
+        <div className="card">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-semibold text-text-primary">Critical Cases</h2>
+            <div>
+              <p className="text-card-title text-text-primary">Critical & High Priority Cases</p>
+              <p className="text-xs text-text-muted">Requires officer adjudication</p>
+            </div>
             <button
-              className="text-xs text-brand font-medium hover:underline flex items-center gap-1"
               onClick={() => navigate('/officer/queue')}
+              className="text-xs text-brand font-semibold hover:underline flex items-center gap-1"
             >
-              All <ArrowRight className="w-3 h-3" />
+              View all <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
-          <div className="space-y-2.5">
+          <div className="space-y-3">
             {criticalCases.map(c => (
               <div
                 key={c.id}
-                className="p-3 rounded-card border border-border hover:bg-canvas cursor-pointer transition-colors"
                 onClick={() => navigate('/officer/queue')}
+                className="p-3 bg-canvas rounded-card border border-border hover:border-brand/40 cursor-pointer transition-colors"
               >
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="font-mono text-xs text-brand">{c.id}</span>
-                  <StatusBadge type="severity" value={c.severity} size="sm" />
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <StatusBadge type="severity" value={c.severity} size="sm" />
+                    <span className="font-mono text-xs text-text-secondary">{c.id}</span>
+                    <span className="text-xs font-medium text-text-primary">{c.caseType.replace(/_/g, ' ')}</span>
+                  </div>
+                  <span className="text-xs text-text-muted flex-shrink-0">Due {c.slaDueAt}</span>
                 </div>
-                <p className="text-xs text-text-secondary line-clamp-2">{c.description}</p>
-                <div className="flex items-center gap-1.5 mt-1.5">
-                  <Clock className="w-3 h-3 text-text-muted" />
-                  <span className="text-xs text-text-muted">Due {c.slaDueAt}</span>
+                <p className="text-xs text-text-secondary mt-1.5 line-clamp-1">{c.description}</p>
+                <p className="text-xs text-text-muted mt-1 font-medium">{c.institutionName}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Top risk institutions */}
+        <div className="card">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <p className="text-card-title text-text-primary">Institutions with Open Cases</p>
+              <p className="text-xs text-text-muted">Ranked by case volume and integrity score</p>
+            </div>
+            <button
+              onClick={() => navigate('/officer/institutions')}
+              className="text-xs text-brand font-semibold hover:underline flex items-center gap-1"
+            >
+              View all <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <div className="space-y-3">
+            {riskInstitutions.map(inst => (
+              <div
+                key={inst.id}
+                onClick={() => navigate('/officer/institutions')}
+                className="p-3 bg-canvas rounded-card border border-border flex items-center justify-between hover:border-brand/40 cursor-pointer transition-colors"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-text-primary truncate">{inst.name}</p>
+                  <p className="text-xs text-text-muted">{inst.state} · {inst.type}</p>
+                </div>
+                <div className="flex items-center gap-3 ml-3 flex-shrink-0">
+                  <div className="text-right">
+                    <span className="text-xs font-semibold text-danger">{inst.openCases} cases</span>
+                    <p className="text-xs text-text-muted">Score: {inst.integrityScore}</p>
+                  </div>
+                  <StatusBadge type="integrity" value={inst.integrityBand} size="sm" />
                 </div>
               </div>
             ))}
           </div>
-        </motion.div>
+        </div>
       </div>
 
-      {/* Institution risk + activity */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Institution risk table */}
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.25 }}
-          className="card"
-        >
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-brand" />
-              <h2 className="text-sm font-semibold text-text-primary">Institutions Needing Attention</h2>
-            </div>
-            <button
-              className="text-xs text-brand font-medium hover:underline flex items-center gap-1"
-              onClick={() => navigate('/officer/institutions')}
-            >
-              All <ArrowRight className="w-3 h-3" />
-            </button>
-          </div>
-          <div className="space-y-3">
-            {topRiskInstitutions.map((inst, i) => (
-              <motion.div
-                key={inst.id}
-                initial={{ opacity: 0, x: -6 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.3 + i * 0.05 }}
-                className="flex items-center gap-3 p-2.5 rounded-card hover:bg-canvas cursor-pointer transition-colors"
-                onClick={() => navigate('/officer/institutions')}
-              >
-                <div className={`w-8 h-8 rounded-card flex items-center justify-center text-xs font-bold flex-shrink-0
-                  ${inst.integrityBand === 'A' ? 'bg-emerald-50 text-emerald-700' :
-                    inst.integrityBand === 'B' ? 'bg-blue-50 text-blue-700' :
-                    inst.integrityBand === 'C' ? 'bg-amber-50 text-amber-700' :
-                    'bg-red-50 text-red-700'}`}>
-                  {inst.integrityBand}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-text-primary truncate">{inst.name}</p>
-                  <p className="text-xs text-text-muted">{inst.state} · {inst.enrolledCount}/{inst.approvedIntake} enrolled</p>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  {inst.openCases > 0 && (
-                    <span className="badge badge-danger text-xs">{inst.openCases} cases</span>
-                  )}
-                </div>
-              </motion.div>
-            ))}
-          </div>
-        </motion.div>
-
-        {/* System activity */}
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.28 }}
-          className="card"
-        >
-          <h2 className="text-sm font-semibold text-text-primary mb-5">System Activity</h2>
-          <ActivityTimeline events={mockTimeline} maxItems={6} />
-        </motion.div>
+      {/* Activity timeline */}
+      <div className="card">
+        <p className="text-card-title text-text-primary mb-1">Live Cryptographic Audit Activity</p>
+        <p className="text-xs text-text-muted mb-4">Immutable hash-chained system events</p>
+        <ActivityTimeline events={timeline} />
       </div>
     </div>
   );

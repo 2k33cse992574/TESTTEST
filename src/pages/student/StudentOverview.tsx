@@ -62,7 +62,7 @@ function WalletQRModal({ onClose }: { onClose: () => void }) {
 
   const generate = async () => {
     setGenerating(true);
-    const cred = issueCredential(purpose, fields);
+    const cred = await issueCredential(purpose, fields);
     // Build a real JWT-like payload string for QR encoding
     const header = btoa(JSON.stringify({ alg: 'EdDSA', typ: 'JWT' }));
     const payload = btoa(JSON.stringify(cred));
@@ -369,17 +369,32 @@ function AccessLogModal({ onClose }: { onClose: () => void }) {
 // ── Main page ────────────────────────────────────────────────────
 export default function StudentOverview() {
   const navigate = useNavigate();
-  const { documents, livePhotoDone } = useStudent();
+  const {
+    documents, livePhotoDone, backendOnline, isAnalyzingML,
+    mlAssessment, runMLRiskCheck, profileData, refreshProfile,
+  } = useStudent();
   const [showWallet,    setShowWallet]    = useState(false);
   const [showAccessLog, setShowAccessLog] = useState(false);
   const [showNotif,     setShowNotif]     = useState(false);
 
+  useEffect(() => {
+    refreshProfile();
+    const handleFocus = () => refreshProfile();
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [refreshProfile]);
+
   const verifiedDocs = documents.filter(d => d.status === 'VERIFIED').length;
   const unread       = NOTIFS.filter(n => !n.read).length;
 
+  const st = profileData?.student;
+  const currentHoldState  = st?.holdState ?? (mlAssessment && mlAssessment.riskScore > 40 ? 'CONFLICT_HOLD' : 'NONE');
+  const currentStatus     = st?.status ?? (currentHoldState === 'CONFLICT_HOLD' ? 'ADMITTED (HOLD)' : 'ENROLLED');
+  const currentTrustLevel = st?.trustLevel ?? (mlAssessment ? mlAssessment.trustLevel : 3);
+
   const metrics = [
-    { label: 'Enrolment Status',   value: 'Enrolled',      sublabel: 'AY 2026-27 · B.Tech CSE',         color: 'success' as const },
-    { label: 'Trust Level',        value: 'L3',            sublabel: 'Cross-Checked · 3 of 4 complete', color: 'brand'   as const },
+    { label: 'Enrolment Status',   value: currentStatus,   sublabel: 'AY 2026-27 · B.Tech CSE',         color: currentHoldState === 'NONE' ? ('success' as const) : ('warning' as const) },
+    { label: 'Trust Level',        value: `L${currentTrustLevel}`, sublabel: `Tier L${currentTrustLevel} · ML Verified`, color: 'brand'   as const },
     { label: 'Open Requests',      value: 1,               sublabel: '1 awaiting review',               color: 'warning' as const },
     { label: 'Documents Verified', value: verifiedDocs,    sublabel: `${documents.length} total`,       color: 'info'    as const },
   ];
@@ -439,6 +454,105 @@ export default function StudentOverview() {
         }
       />
 
+      {/* AICTE ML Integrity & Risk Engine Banner */}
+      <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.12, ease: [0.16, 1, 0.3, 1] }}
+        className="card border-brand/30 bg-gradient-to-r from-brand-soft/40 via-surface to-brand-soft/20">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-start gap-3.5">
+            <div className="w-10 h-10 rounded-card bg-brand flex items-center justify-center flex-shrink-0 text-white shadow-sm">
+              <Zap className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-sm font-bold text-text-primary">AICTE ML Anomaly Risk Scorer</h3>
+                <span className="badge badge-neutral text-xs font-mono">IsolationForest v2.4</span>
+                {backendOnline ? (
+                  <span className="badge badge-success text-xs flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    FastAPI Backend Live (:8000)
+                  </span>
+                ) : (
+                  <span className="badge badge-neutral text-xs">Failsafe Engine Mode</span>
+                )}
+              </div>
+              <p className="text-xs text-text-secondary mt-1">
+                Unsupervised anomaly detection & Single-Seat Lock verification across national institutional registries.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
+            <button
+              onClick={() => runMLRiskCheck({ isMultiInstitutionClaim: false })}
+              disabled={isAnalyzingML}
+              className="btn btn-primary btn-sm flex items-center gap-1.5 shadow-sm"
+            >
+              {isAnalyzingML ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  Analyzing Cohort…
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  Run Live ML Integrity Check
+                </>
+              )}
+            </button>
+            <button
+              onClick={() => runMLRiskCheck({ isMultiInstitutionClaim: true })}
+              disabled={isAnalyzingML}
+              className="btn btn-secondary btn-sm text-xs"
+              title="Test multi-institution claim detection"
+            >
+              Simulate Conflict Claim
+            </button>
+          </div>
+        </div>
+
+        {mlAssessment && (
+          <div className="mt-4 pt-3.5 border-t border-brand/10 grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="p-3 bg-surface rounded-card border border-border">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-text-muted">Composite Risk Score</span>
+                <span className={`badge ${
+                  mlAssessment.riskScore > 40 ? 'badge-danger' : mlAssessment.riskScore > 20 ? 'badge-warning' : 'badge-success'
+                } text-xs font-bold`}>
+                  {mlAssessment.riskScore} / 100 ({mlAssessment.riskBand})
+                </span>
+              </div>
+              <p className="text-xs text-text-secondary mt-1">
+                {mlAssessment.riskScore <= 20
+                  ? 'Normal Pattern · No anomalous flags detected'
+                  : 'Anomalous multi-institution claim pattern detected'}
+              </p>
+            </div>
+
+            <div className="p-3 bg-surface rounded-card border border-border">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-text-muted">Explainable SHAP Factors</span>
+                <span className="text-xs font-semibold text-brand">{mlAssessment.factors.length} factors evaluated</span>
+              </div>
+              <p className="text-xs text-text-secondary mt-1 truncate">
+                {mlAssessment.factors[0]?.factor || 'Baseline Normal'}: {mlAssessment.factors[0]?.impact || '0 pts'}
+              </p>
+            </div>
+
+            <div className="p-3 bg-surface rounded-card border border-border">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-text-muted">Cryptographic Audit Anchor</span>
+                <span className="text-xs font-mono font-semibold text-text-primary">
+                  Block #{mlAssessment.auditBlockSeq || 1044}
+                </span>
+              </div>
+              <p className="text-xs text-text-muted mt-1 font-mono truncate">
+                SHA-256: {mlAssessment.auditHash || '8d11ee4deb91c530...'}
+              </p>
+            </div>
+          </div>
+        )}
+      </motion.div>
+
       {/* Metrics */}
       <motion.div variants={container} initial="hidden" animate="show"
         className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
@@ -455,7 +569,7 @@ export default function StudentOverview() {
           className="card lg:col-span-2 space-y-5">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-text-primary">Enrolment Record</h2>
-            <StatusBadge type="enrolment" value="ENROLLED" />
+            <StatusBadge type="enrolment" value={currentHoldState === 'CONFLICT_HOLD' ? 'ADMITTED' : 'ENROLLED'} />
           </div>
           <div className="grid grid-cols-2 gap-x-6 gap-y-3.5 text-sm">
             {[
@@ -464,7 +578,7 @@ export default function StudentOverview() {
               ['Institution',    'SIET Mumbai'],
               ['Programme',      'B.Tech CSE'],
               ['Academic Year',  '2026-27'],
-              ['Pool / Slot',    'REGULAR · Slot 47'],
+              ['Pool / Slot',    currentHoldState === 'NONE' ? 'REGULAR · Slot 47' : 'HOLD · Conflicting Claims Locked'],
               ['Admission Date', '1 Aug 2026'],
               ['Mode',           'Full-Time'],
             ].map(([label, val]) => (
@@ -476,8 +590,12 @@ export default function StudentOverview() {
           </div>
           <div className="pt-3 border-t border-border">
             <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide mb-2">Trust Level</p>
-            <TrustLadder level={3} showLabel />
-            <p className="text-xs text-text-muted mt-2">Verified against APAAR · Seat claimed · Identity cross-checked. Complete annual affirmation to reach L4.</p>
+            <TrustLadder level={currentTrustLevel as any} showLabel />
+            <p className="text-xs text-text-muted mt-2">
+              {currentHoldState === 'NONE'
+                ? 'Verified against APAAR · Seat claimed · Identity cross-checked. Complete annual affirmation to reach L4.'
+                : 'Account locked on CONFLICT_HOLD. Identity resolution required by AICTE officer to restore trust level.'}
+            </p>
           </div>
         </motion.div>
 
@@ -486,8 +604,8 @@ export default function StudentOverview() {
           <h2 className="text-sm font-semibold text-text-primary">Status Checklist</h2>
           {[
             { icon: CheckCircle2, color: 'text-emerald-500', label: 'APAAR ID verified',         done: true  },
-            { icon: CheckCircle2, color: 'text-emerald-500', label: 'Seat claim successful',     done: true  },
-            { icon: CheckCircle2, color: 'text-emerald-500', label: 'Identity cross-checked',    done: true  },
+            { icon: currentHoldState === 'NONE' ? CheckCircle2 : Clock, color: currentHoldState === 'NONE' ? 'text-emerald-500' : 'text-amber-500', label: currentHoldState === 'NONE' ? 'Seat claim successful' : 'Seat claim on hold', done: currentHoldState === 'NONE' },
+            { icon: currentHoldState === 'NONE' ? CheckCircle2 : AlertCircle, color: currentHoldState === 'NONE' ? 'text-emerald-500' : 'text-danger', label: currentHoldState === 'NONE' ? 'Identity cross-checked across institutions' : 'Conflict hold active (Action required)', done: currentHoldState === 'NONE' },
             { icon: livePhotoDone ? CheckCircle2 : Clock, color: livePhotoDone ? 'text-emerald-500' : 'text-amber-500', label: 'Live photo check', done: livePhotoDone },
             { icon: Clock,        color: 'text-amber-500',   label: 'Category cert pending',     done: false },
             { icon: AlertCircle,  color: 'text-blue-400',    label: 'L4 cert (annual)',          done: false },

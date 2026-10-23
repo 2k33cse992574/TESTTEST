@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { api } from '@/api/client';
 import {
   History, CheckCircle2, AlertTriangle, XCircle, Shield,
   Hash, Clock, User, Building2, Search, Calendar, Download,
+  RotateCcw, Sparkles
 } from 'lucide-react';
 
 interface AuditEvent {
@@ -14,7 +16,7 @@ interface AuditEvent {
   valid: boolean; detail: string;
 }
 
-const AUDIT_EVENTS: AuditEvent[] = [
+const DEFAULT_EVENTS: AuditEvent[] = [
   { chainId: 1, seq: 1042, ts: '2026-10-22T11:14:22Z', actor: 'Shri Rajesh Kumar', actorType: 'officer',      action: 'CASE_DECISION_RECORDED',    entity: 'case',       entityId: 'C-0021', payloadDigest: 'a3f2...d91c', prevHash: 'e4b1...8a3f', thisHash: 'c7d4...12fe', valid: true,  detail: 'Outcome: Resolved — no issue. Rationale recorded. Audit chain updated.' },
   { chainId: 1, seq: 1041, ts: '2026-10-22T10:58:01Z', actor: 'APAAR Service',     actorType: 'system',       action: 'IDENTITY_VERIFIED',          entity: 'enrolment',  entityId: 's12',    payloadDigest: 'b9c3...44ad', prevHash: 'd2e8...f174', thisHash: 'e4b1...8a3f', valid: true,  detail: 'APAAR 1234-5678-2222 verified. Name match 0.99. DOB exact.' },
   { chainId: 1, seq: 1040, ts: '2026-10-22T10:30:14Z', actor: 'Dr. Priya Nair',    actorType: 'institution',  action: 'BATCH_SUBMITTED',            entity: 'batch',      entityId: 'BATCH-2901', payloadDigest: '77de...c2b1', prevHash: '9f4a...2211', thisHash: 'd2e8...f174', valid: true,  detail: '245 rows submitted. 231 accepted, 8 rejected, 6 held. Signed receipt issued.' },
@@ -27,14 +29,6 @@ const AUDIT_EVENTS: AuditEvent[] = [
   { chainId: 1, seq: 1037, ts: '2026-10-15T14:20:00Z', actor: 'Omar Al-Hassan',    actorType: 'student',      action: 'CREDENTIAL_REVOKED',         entity: 'credential', entityId: 'CRED-0091', payloadDigest: '9d2e...f7bc', prevHash: '2a8c...55de', thisHash: '5b9d...4e10', valid: true,  detail: 'Student revoked consent for employer verification. Next scan will return REVOKED.' },
 ];
 
-const TAMPERED_EVENT: AuditEvent = {
-  chainId: 1, seq: 1036, ts: '2026-10-14T10:00:00Z',
-  actor: '[MODIFIED]', actorType: 'system',
-  action: 'RECORD_MODIFIED_DIRECTLY', entity: 'enrolment', entityId: 's7',
-  payloadDigest: '****...****', prevHash: '????...????', thisHash: 'MISMATCH',
-  valid: false, detail: 'Chain hash mismatch detected. Payload digest does not match stored digest. Possible tampering or data corruption.',
-};
-
 const actorIcon: Record<string, React.ElementType> = {
   system: Shield, officer: User, institution: Building2, student: User,
 };
@@ -44,193 +38,277 @@ const actorColor: Record<string, string> = {
 };
 
 export default function OfficerAuditTrail() {
-  const [showTamper, setShowTamper] = useState(false);
+  const [events, setEvents]         = useState<AuditEvent[]>(DEFAULT_EVENTS);
+  const [chainStatus, setChainStatus] = useState<any>({ isValid: true, reason: 'All cryptographic hash chains healthy.' });
   const [asOf, setAsOf]             = useState('');
   const [timeMachineActive, setTimeMachineActive] = useState(false);
   const [search, setSearch]         = useState('');
+  const [simulating, setSimulating] = useState(false);
 
-  const allEvents = showTamper ? [...AUDIT_EVENTS, TAMPERED_EVENT].sort((a,b) => b.seq - a.seq) : AUDIT_EVENTS;
-  const filtered  = allEvents.filter(e =>
+  const fetchChain = () => {
+    api.getAuditChain()
+      .then(res => { if (res && res.length) setEvents(res); })
+      .catch(() => {});
+    api.verifyAuditChain()
+      .then(res => { if (res) setChainStatus(res); })
+      .catch(() => {});
+  };
+
+  useEffect(() => {
+    fetchChain();
+  }, []);
+
+  const handleSimulateTamper = async () => {
+    setSimulating(true);
+    try {
+      await api.simulateTamper({ seq: 1040 });
+      fetchChain();
+    } catch {
+      // Local fallback
+      setChainStatus({
+        isValid: false,
+        brokenSeq: 1040,
+        reason: 'Block #1040 payload corrupted! Hash mismatch: stored d2e8... vs calculated e3b0...'
+      });
+      setEvents(prev => prev.map(e => e.seq === 1040 ? { ...e, valid: false, thisHash: 'MISMATCH', actor: '[MODIFIED]' } : e));
+    } finally {
+      setSimulating(false);
+    }
+  };
+
+  const handleRestoreChain = async () => {
+    try {
+      await api.restoreAuditChain();
+      fetchChain();
+    } catch {
+      setChainStatus({ isValid: true, reason: 'Chain restored.' });
+      setEvents(DEFAULT_EVENTS);
+    }
+  };
+
+  const activateTimeMachine = () => {
+    if (!asOf) return;
+    api.timeMachineReplay(asOf)
+      .then(res => {
+        if (res && res.events) {
+          setEvents(res.events);
+          setTimeMachineActive(true);
+        }
+      })
+      .catch(() => {
+        setEvents(DEFAULT_EVENTS.filter(e => e.ts <= asOf));
+        setTimeMachineActive(true);
+      });
+  };
+
+  const resetTimeMachine = () => {
+    setTimeMachineActive(false);
+    setAsOf('');
+    fetchChain();
+  };
+
+  const handleExport = () => {
+    const headers = ["Seq", "Chain", "Timestamp", "Actor", "Actor Type", "Action", "Entity", "Entity ID", "Prev Hash", "This Hash", "Valid", "Detail"];
+    const rows = events.map(e => [
+      e.seq, e.chainId, e.ts, e.actor, e.actorType, e.action, e.entity, e.entityId, e.prevHash, e.thisHash, e.valid, `"${e.detail.replace(/"/g, '""')}"`
+    ]);
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `AICTE_Cryptographic_Audit_Trail_${Date.now()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const filtered = events.filter(e =>
     !search || [e.actor, e.action, e.entity, e.entityId, e.detail]
       .some(v => v.toLowerCase().includes(search.toLowerCase()))
   );
-
-  const activateTimeMachine = () => {
-    if (asOf) setTimeMachineActive(true);
-  };
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       <PageHeader
         title="Audit Trail"
-        subtitle="Tamper-evident, hash-chained audit log. Every action is recorded, digested, and independently anchored."
+        subtitle="Tamper-evident, hash-chained cryptographic ledger. Every enrolment action is SHA-256 digested and verified."
         breadcrumb={['AICTE Officer Portal', 'Audit Trail']}
         actions={
-          <button className="btn btn-secondary btn-sm">
-            <Download className="w-3.5 h-3.5" /> Export Audit Log
-          </button>
+          <div className="flex items-center gap-2">
+            <button className="btn btn-secondary btn-sm" onClick={handleExport}>
+              <Download className="w-3.5 h-3.5" /> Export Audit Log
+            </button>
+          </div>
         }
       />
 
-      {/* Chain health */}
+      {/* Chain Integrity Alert Banner */}
+      {!chainStatus.isValid ? (
+        <div className="p-4 bg-red-50 border-2 border-red-300 rounded-card flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <XCircle className="w-6 h-6 text-danger flex-shrink-0 animate-pulse" />
+            <div>
+              <p className="text-sm font-bold text-red-900">
+                HASH CHAIN INTEGRITY BREACH: Block #{chainStatus.brokenSeq} Corrupted!
+              </p>
+              <p className="text-xs text-red-700 mt-0.5">{chainStatus.reason}</p>
+            </div>
+          </div>
+          <button
+            onClick={handleRestoreChain}
+            className="btn btn-primary btn-sm text-xs"
+          >
+            <RotateCcw className="w-3.5 h-3.5" /> Restore Genuine Chain
+          </button>
+        </div>
+      ) : (
+        <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-card flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+            <div>
+              <p className="text-sm font-bold text-emerald-900">
+                Cryptographic Chain Verified & Healthy
+              </p>
+              <p className="text-xs text-emerald-700 mt-0.5">
+                All SHA-256 block hash pointers (Block N → Block N-1) are mathematically intact.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={handleSimulateTamper}
+            disabled={simulating}
+            className="btn btn-secondary btn-sm text-xs text-danger border-red-200 hover:bg-red-50"
+          >
+            <AlertTriangle className="w-3.5 h-3.5 text-danger" /> Simulate Unauthorized Tamper
+          </button>
+        </div>
+      )}
+
+      {/* Chain health cards */}
       <div className="grid grid-cols-3 gap-4">
         {[
-          { label: 'Chain 1 — Main Events', events: 1042, valid: !showTamper, lastCheckpoint: '22 Oct 2026' },
-          { label: 'Chain 2 — Seat Ledger',  events: 88,   valid: true,         lastCheckpoint: '21 Oct 2026' },
-          { label: 'Chain 3 — Credentials',  events: 12,   valid: true,         lastCheckpoint: '19 Oct 2026' },
-        ].map((chain, i) => (
-          <motion.div key={i} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.06 }} className="card">
+          { label: 'Chain 1 — Main Events', events: 1042, valid: chainStatus.isValid, lastCheckpoint: '22 Oct 2026' },
+          { label: 'Chain 2 — Seat Ledger',  events: 88,   valid: true,                lastCheckpoint: '21 Oct 2026' },
+          { label: 'Chain 3 — Credentials',  events: 12,   valid: true,                lastCheckpoint: '19 Oct 2026' },
+        ].map((c, i) => (
+          <div key={i} className="card">
             <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-semibold text-text-primary">{chain.label}</p>
-              {chain.valid
-                ? <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                : <XCircle className="w-4 h-4 text-danger animate-pulse" />}
+              <span className="text-xs font-semibold text-text-secondary">{c.label}</span>
+              {c.valid ? (
+                <span className="badge badge-success flex items-center gap-1 text-xs">
+                  <CheckCircle2 className="w-3 h-3" /> Valid
+                </span>
+              ) : (
+                <span className="badge badge-danger flex items-center gap-1 text-xs">
+                  <XCircle className="w-3 h-3" /> Compromised
+                </span>
+              )}
             </div>
-            <p className={`text-xl font-bold tabular-nums ${chain.valid ? 'text-text-primary' : 'text-danger'}`}>
-              {chain.events.toLocaleString()}
-            </p>
-            <p className="text-xs text-text-muted mt-1">events · checkpoint {chain.lastCheckpoint}</p>
-            {!chain.valid && (
-              <p className="text-xs text-danger font-semibold mt-1">⚠ Integrity violation detected</p>
-            )}
-          </motion.div>
+            <p className="text-2xl font-bold text-text-primary tabular-nums">{c.events.toLocaleString()}</p>
+            <p className="text-xs text-text-muted mt-1">Last checkpoint: {c.lastCheckpoint}</p>
+          </div>
         ))}
       </div>
 
-      {/* Time Machine */}
-      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.12 }} className="card">
-        <div className="flex items-center gap-2 mb-3">
+      {/* Historical Time Machine strip */}
+      <div className="card p-4 flex items-center justify-between gap-4 flex-wrap bg-surface-subtle">
+        <div className="flex items-center gap-2">
           <History className="w-4 h-4 text-brand" />
-          <h2 className="text-sm font-semibold text-text-primary">Time Machine</h2>
-          <span className="badge badge-brand text-xs">Bitemporal</span>
-        </div>
-        <p className="text-xs text-text-secondary mb-4">
-          Query what AICTE knew at any past date. Uses bitemporal history — <span className="font-medium">effective_at</span> (when it was true) vs <span className="font-medium">recorded_at</span> (when we learned it). Essential for audits and fair appeals.
-        </p>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 flex-1">
-            <Calendar className="w-4 h-4 text-text-muted flex-shrink-0" />
-            <input
-              type="date" className="input flex-1" max="2026-10-22"
-              value={asOf} onChange={e => { setAsOf(e.target.value); setTimeMachineActive(false); }}
-            />
+          <div>
+            <p className="text-xs font-bold text-text-primary uppercase tracking-wider">Historical Time Machine</p>
+            <p className="text-xs text-text-muted">Replay state and inspect ledger exactly as of past timestamp</p>
           </div>
-          <button className="btn btn-primary" onClick={activateTimeMachine} disabled={!asOf}>
-            <History className="w-3.5 h-3.5" /> Rewind to This Date
-          </button>
         </div>
 
-        <AnimatePresence>
-          {timeMachineActive && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
-              className="mt-4 p-4 bg-brand-soft/40 border border-brand/20 rounded-card"
-            >
-              <p className="text-xs font-semibold text-brand mb-2">
-                Showing system state as of {new Date(asOf).toLocaleDateString('en-IN', { day:'numeric', month:'long', year:'numeric' })}
-              </p>
-              <div className="grid grid-cols-3 gap-3 text-center">
-                {[
-                  { label: 'Records (as of date)', value: '14,200' },
-                  { label: 'Verified (L2+)',        value: '11,400' },
-                  { label: 'Open Cases',            value: '41' },
-                ].map(s => (
-                  <div key={s.label} className="bg-surface rounded-card p-3">
-                    <p className="text-lg font-bold text-brand tabular-nums">{s.value}</p>
-                    <p className="text-xs text-text-muted">{s.label}</p>
-                  </div>
-                ))}
-              </div>
-              <p className="text-xs text-text-muted mt-3">
-                These values reflect what was recorded in the system on or before {asOf}. Bitemporal query: recorded_at ≤ {asOf}.
-              </p>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </motion.div>
-
-      {/* Tamper test */}
-      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.18 }} className={`card border-2 transition-colors ${showTamper ? 'border-danger' : 'border-border'}`}>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Hash className="w-4 h-4 text-text-muted" />
-            <h2 className="text-sm font-semibold text-text-primary">Tamper Detection Demo</h2>
-          </div>
+        <div className="flex items-center gap-2">
+          <input
+            type="datetime-local"
+            className="input text-xs py-1.5"
+            value={asOf}
+            onChange={e => setAsOf(e.target.value)}
+          />
           <button
-            className={`btn btn-sm ${showTamper ? 'btn-danger' : 'btn-secondary'}`}
-            onClick={() => setShowTamper(s => !s)}
+            onClick={activateTimeMachine}
+            className="btn btn-primary btn-sm text-xs"
+            disabled={!asOf}
           >
-            <AlertTriangle className="w-3.5 h-3.5" />
-            {showTamper ? 'Restore Chain' : 'Simulate Row Edit'}
+            Replay Ledger
           </button>
-        </div>
-        <p className="text-xs text-text-secondary mt-2">
-          {showTamper
-            ? 'A direct database edit was simulated. The integrity checker detected a hash mismatch in Chain 1. The event is highlighted in red below.'
-            : 'Click to simulate a direct database edit to a row. Watch the chain integrity indicator turn red instantly.'}
-        </p>
-        <AnimatePresence>
-          {showTamper && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-              className="mt-3 flex items-center gap-2 p-2 bg-red-50 border border-red-200 rounded-control">
-              <XCircle className="w-4 h-4 text-danger flex-shrink-0" />
-              <p className="text-xs text-danger font-semibold">Chain 1 integrity FAILED — hash mismatch at seq 1036. Probable tampering detected.</p>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </motion.div>
-
-      {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
-        <input className="input pl-9 max-w-sm" placeholder="Search events, actors, entities…"
-          value={search} onChange={e => setSearch(e.target.value)} />
-      </div>
-
-      {/* Event log */}
-      <div className="space-y-2">
-        {filtered.map((evt, i) => {
-          const Icon = actorIcon[evt.actorType] ?? Shield;
-          return (
-            <motion.div key={`${evt.chainId}-${evt.seq}`}
-              initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.03 }}
-              className={`card border transition-colors ${!evt.valid ? 'border-danger bg-red-50/30' : 'border-border'}`}
+          {timeMachineActive && (
+            <button
+              onClick={resetTimeMachine}
+              className="btn btn-secondary btn-sm text-xs"
             >
-              <div className="flex items-start gap-4">
-                <div className={`w-8 h-8 rounded-card flex items-center justify-center flex-shrink-0 ${actorColor[evt.actorType]}`}>
-                  <Icon className="w-3.5 h-3.5" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap mb-1">
-                    <span className={`text-xs font-semibold ${!evt.valid ? 'text-danger' : 'text-text-primary'}`}>{evt.action}</span>
-                    <span className="text-xs text-text-muted">·</span>
-                    <span className="text-xs text-text-secondary">{evt.actor}</span>
-                    <span className="text-xs px-1.5 py-0.5 bg-canvas border border-border rounded font-mono text-text-muted">{evt.entity}:{evt.entityId}</span>
-                    {!evt.valid && <span className="badge badge-danger text-xs">TAMPERED</span>}
-                  </div>
-                  <p className="text-xs text-text-secondary">{evt.detail}</p>
-                  <div className="flex items-center gap-4 mt-2 text-xs text-text-muted font-mono">
-                    <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{new Date(evt.ts).toLocaleString('en-IN')}</span>
-                    <span>Chain {evt.chainId} · seq {evt.seq}</span>
-                    <span className={`flex items-center gap-1 ${evt.valid ? 'text-emerald-600' : 'text-danger'}`}>
-                      <Hash className="w-3 h-3" />{evt.thisHash}
-                    </span>
-                  </div>
-                </div>
-                {evt.valid
-                  ? <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
-                  : <XCircle className="w-4 h-4 text-danger flex-shrink-0 mt-0.5 animate-pulse" />}
-              </div>
-            </motion.div>
-          );
-        })}
+              Reset to Present
+            </button>
+          )}
+        </div>
       </div>
 
-      {filtered.length === 0 && (
-        <div className="card text-center py-12 text-text-muted text-sm">
-          No events match "{search}". Clear search to see all audit events.
+      {/* Search and Filters */}
+      <div className="flex items-center justify-between gap-4">
+        <div className="relative w-72">
+          <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+          <input
+            className="w-full pl-8 pr-3 py-1.5 text-xs rounded-control border border-border bg-canvas focus:outline-none focus:ring-1 focus:ring-brand"
+            placeholder="Search audit trail by actor, action, entity…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
         </div>
-      )}
+        <span className="text-xs text-text-muted">
+          Showing {filtered.length} anchored blocks
+        </span>
+      </div>
+
+      {/* Event list */}
+      <div className="card p-0 overflow-hidden">
+        <div className="divide-y divide-border">
+          {filtered.map(e => {
+            const Icon = actorIcon[e.actorType] || Shield;
+            const colorClass = actorColor[e.actorType] || 'bg-canvas text-text-secondary';
+            return (
+              <div
+                key={`${e.chainId}-${e.seq}`}
+                className={`p-4 flex items-start gap-4 transition-colors ${
+                  !e.valid ? 'bg-red-50/60 border-l-4 border-l-danger' : 'hover:bg-canvas'
+                }`}
+              >
+                <div className={`w-8 h-8 rounded-card ${colorClass} flex items-center justify-center flex-shrink-0 mt-0.5`}>
+                  <Icon className="w-4 h-4" />
+                </div>
+
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-mono text-xs font-bold text-brand">#{e.seq}</span>
+                    <span className="text-xs font-semibold text-text-primary">{e.action}</span>
+                    <span className="badge badge-neutral text-xs">Chain {e.chainId}</span>
+                    <span className="text-xs text-text-muted">·</span>
+                    <span className="text-xs font-medium text-text-secondary">{e.actor}</span>
+                    {!e.valid ? (
+                      <span className="badge badge-danger text-xs font-mono">HASH MISMATCH</span>
+                    ) : (
+                      <span className="badge badge-success text-xs font-mono">VERIFIED</span>
+                    )}
+                  </div>
+
+                  <p className="text-xs text-text-secondary">{e.detail}</p>
+
+                  <div className="flex items-center gap-4 text-xs font-mono text-text-muted pt-1">
+                    <span>Digest: {e.payloadDigest}</span>
+                    <span>Prev: {e.prevHash}</span>
+                    <span className={!e.valid ? 'text-danger font-bold' : ''}>This: {e.thisHash}</span>
+                  </div>
+                </div>
+
+                <div className="text-right flex-shrink-0 text-xs text-text-muted">
+                  {e.ts}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
